@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+venv/
+
+# Enrolled face data (biometric — never commit)
+faces/
+models/
+*.npy
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
