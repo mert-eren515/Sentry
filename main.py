@@ -18,6 +18,14 @@ COLORS = {"OK": (0, 255, 0), "WARN": (0, 165, 255), "ALARM": (0, 0, 255)}
 GREEN, RED = (0, 255, 0), (0, 0, 255)
 BANNER_SECONDS = 2.0
 
+# Once the identity is BOUND the face model is only watching for the person
+# leaving, and the five second lease already covers that. It is the single most
+# expensive step in the loop, so in that one state it runs every Nth frame and
+# the previous result is reused in between. Every other state runs it on every
+# frame, because that is when the identity is actually being decided.
+FACE_EVERY = 3
+
+
 detector = FaceDetector()
 pose = PoseDetector()
 hand = HandDetector()
@@ -41,6 +49,10 @@ def on_gesture(name, gesture, granted):
 
 last = time.monotonic()
 fps = 0.0
+frame = 0
+face, face_width, face_seen, identity = None, 0.0, False, None
+
+
 banner, banner_color, banner_until = "", GREEN, 0.0
 
 while True:
@@ -54,22 +66,34 @@ while True:
     wanted = binder.state in (binder.AWAITING_HANDS, binder.BOUND, binder.WARN)
     pending = pool.submit(hand.detect, image) if wanted else None
 
-    faces = detector.detect(image)
     people = pose.detect(image)
 
-    # Still a single-person setup on the face side: the largest face is the one
-    # we try to identify. The pose model is what makes everyone else visible.
-    face, name, face_width = None, None, 0.0
-    if faces:
-        face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]))
-        name, score = recognizer.identify(face)
-        face_width = float(face.bbox[2] - face.bbox[0])
+    frame += 1
+    if binder.state != binder.BOUND or frame % FACE_EVERY == 0:
+        faces = detector.detect(image)
 
-    identity = voter.update(name)
+        # Still a single-person setup on the face side: the largest face is the
+        # one we try to identify. The pose model is what makes everyone else
+        # visible.
+        face, name, face_width = None, None, 0.0
+        if faces:
+            face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]))
+            name, score = recognizer.identify(face)
+            face_width = float(face.bbox[2] - face.bbox[0])
+
+        face_seen = bool(faces)
+        identity = voter.update(name)
+    # On a skipped frame the last face, its width and the identity carry over,
+    # and the voter is deliberately not advanced: not looking is not the same as
+    # looking and finding nobody, and feeding it a None would read as the person
+    # having left.
 
     # "No face in frame" and "a face that does not match anyone" are different
     # events: the first means the person walked away, the second means a
     # stranger is standing there. The binder gets both, separately.
+    # The skeletons are always current; the face box may be up to two frames
+    # old on a skipped frame. match_owner pads the box by 25%, which is far more
+    # than a head moves in that time.
     owner = match_owner(people, face.bbox) if face is not None and identity else None
 
     # Nothing consumes hand data until there is an owner: gestures are read only
@@ -77,7 +101,7 @@ while True:
     # know whose the other hands are. So the idle loop never pays for it.
     hands = pending.result() if pending is not None else ()
 
-    level, message = binder.update(identity, bool(faces), owner, face_width,
+    level, message = binder.update(identity, face_seen, owner, face_width,
                                    people, hands)
 
     # Gestures are only read once the identity is verified, so an unrecognised
