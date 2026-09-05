@@ -1,5 +1,5 @@
-import onnxruntime as ort
-ort.preload_dlls()
+import gpu
+gpu.enable()
 
 import cv2
 import numpy as np
