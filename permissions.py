@@ -1,7 +1,7 @@
 import tomllib
 from pathlib import Path
 
-from gestures import GESTURES
+from gestures import ALL_GESTURES
 
 DEFAULT_PATH = Path(__file__).parent / "permissions.toml"
 
@@ -29,7 +29,7 @@ class Permissions:
         # the hardest kind of bug to notice in a system that is supposed to deny.
         for who, granted in self.rules.items():
             for gesture in granted:
-                if gesture != ANY and gesture not in GESTURES:
+                if gesture != ANY and gesture not in ALL_GESTURES:
                     print(f"WARNING: unknown gesture '{gesture}' for '{who}'")
 
         people = ", ".join(sorted(self.rules)) or "nobody"

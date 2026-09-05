@@ -5,7 +5,11 @@
 # been recognised and the both-hands check has passed - so a stranger is denied
 # no matter what is written here.
 #
-# Gesture names: t_pose, arms_crossed, hands_up, left_arm_raised, right_arm_raised
+# Arm poses:    hands_up, left_arm_raised, right_arm_raised, arms_crossed, t_pose
+# Finger poses: thumbs_up, thumbs_down, peace, pointing, open_palm, fist
+#
+# Finger poses are only read from a hand that sits on one of the person's own
+# chained wrists, so a hand reaching in from outside can never trigger one.
 # "*" as a gesture means all of them. "*" as a name means everyone recognised.
 # Left and right are the person's own, not the side of the screen they appear on.
 
@@ -13,4 +17,4 @@
 Mert = ["*"]
 
 # Granted to anyone the system recognises, whoever they turn out to be.
-"*" = ["hands_up"]
+"*" = ["hands_up", "thumbs_up"]

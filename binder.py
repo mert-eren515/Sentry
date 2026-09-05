@@ -50,6 +50,26 @@ def owner_hands(owner, face_width):
             if in_reach(w, head, face_width)}
 
 
+# A MediaPipe hand and a pose wrist are the same joint seen by two models, so
+# they land close together. Anything further apart than this - measured in face
+# widths, like the reach test - is a different hand.
+HAND_MATCH = 1.5
+
+
+def match_hands(hands, wrists, face_width):
+    # Split detected hands into the ones sitting on a wrist we already trust and
+    # the ones we cannot account for. The second group is what closes the blind
+    # spot: the pose model never reports a bare forearm as a person, but the
+    # hand model sees the hand, and that hand belongs to nobody.
+    owned, loose = [], []
+    limit = HAND_MATCH * face_width
+    for hand in hands:
+        near = [np.hypot(hand.wrist[0] - w[0], hand.wrist[1] - w[1])
+                for w in wrists.values()]
+        (owned if near and min(near) <= limit else loose).append(hand)
+    return owned, loose
+
+
 def foreign_hands(people, owner):
     # Every wrist in the frame that is not the owner's. This is the threat we
     # care about: a hand reaching in from somewhere else while the known person
@@ -89,6 +109,7 @@ class IdentityBinder:
 
         # Single frames lie: a hand blurs, a wrist drops below threshold for one
         # frame. Same majority-vote trick the face recogniser already uses.
+        self.owned_hands = []
         self.hands_voter = Voter()
         self.intruder_voter = Voter()
         self.unknown_voter = Voter()
@@ -101,12 +122,17 @@ class IdentityBinder:
     def elapsed(self):
         return time.monotonic() - self.since
 
-    def update(self, identity, face_seen, owner, face_width, people):
+    def update(self, identity, face_seen, owner, face_width, people, hands=()):
         # identity: stable name from the face Voter, None when not recognised
         # face_seen: a face was detected at all, recognised or not
-        hands = owner_hands(owner, face_width) if owner is not None else {}
-        both_hands = self.hands_voter.update(len(hands) >= 2) is True
-        intruders = self.intruder_voter.update(foreign_hands(people, owner) > 0) is True
+        wrists = owner_hands(owner, face_width) if owner is not None else {}
+        both_hands = self.hands_voter.update(len(wrists) >= 2) is True
+
+        # Hands the owner cannot account for count as intruders too, alongside
+        # whole people the pose model resolved separately.
+        self.owned_hands, loose = match_hands(hands, wrists, face_width or 1.0)
+        strangers = foreign_hands(people, owner) > 0 or (owner is not None and loose)
+        intruders = self.intruder_voter.update(bool(strangers)) is True
         unknown = self.unknown_voter.update(face_seen and identity is None) is True
 
         if identity is not None:
@@ -147,7 +173,7 @@ class IdentityBinder:
                 self._enter(self.IDLE)
                 self.identity = None
 
-        return self._report(unknown, intruders, no_chain, len(hands))
+        return self._report(unknown, intruders, no_chain, len(wrists))
 
     def _report(self, unknown, intruders, no_chain, hand_count):
         if unknown:

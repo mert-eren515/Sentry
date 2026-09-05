@@ -1,6 +1,7 @@
 import numpy as np
 
 from recognizer import Voter
+from hand_gestures import HAND_GESTURES
 from pose_detector import (NOSE, L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST,
                            L_ELBOW, R_ELBOW)
 
@@ -98,18 +99,30 @@ GESTURES = {
 }
 
 
+# Everything the system can recognise, for validating permissions.toml.
+ALL_GESTURES = {**HAND_GESTURES, **GESTURES}
+
+
 class GestureWatcher:
     # A gesture has to hold for a few frames before it counts, and it fires once
     # rather than on every frame it stays up. Without the latch a raised hand
     # would trigger thirty times a second.
     def __init__(self):
-        self.voters = {name: Voter() for name in GESTURES}
+        self.voters = {name: Voter() for name in list(HAND_GESTURES) + list(GESTURES)}
         self.active = None
 
-    def update(self, person):
+    def update(self, person, hands=()):
+        # Finger shapes are deliberately checked before arm poses: they are the
+        # more specific intent, so a thumbs up is never swallowed by whatever
+        # the arm happens to be doing at the same time.
         stable = None
-        for name, test in GESTURES.items():
+        for name, test in HAND_GESTURES.items():
             # bool() is deliberate: a numpy bool here would never match `is True`.
+            hit = self.voters[name].update(bool(any(test(h) for h in hands)))
+            if stable is None and hit is True:
+                stable = name
+
+        for name, test in GESTURES.items():
             hit = self.voters[name].update(bool(person is not None and test(person)))
             if stable is None and hit is True:
                 stable = name

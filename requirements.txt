@@ -1,5 +1,6 @@
 insightface
-opencv-python
+opencv-contrib-python
 onnxruntime-gpu
 numpy
 ultralytics
+mediapipe

@@ -5,6 +5,7 @@ import time
 import cv2
 from face_detector import FaceDetector
 from pose_detector import PoseDetector
+from hand_detector import HandDetector
 from recognizer import Recognizer, Voter
 from binder import IdentityBinder, match_owner
 from gestures import GestureWatcher
@@ -17,6 +18,7 @@ BANNER_SECONDS = 2.0
 
 detector = FaceDetector()
 pose = PoseDetector()
+hand = HandDetector()
 recognizer = Recognizer()
 voter = Voter()
 binder = IdentityBinder()
@@ -56,12 +58,23 @@ while True:
     # events: the first means the person walked away, the second means a
     # stranger is standing there. The binder gets both, separately.
     owner = match_owner(people, face.bbox) if face is not None and identity else None
-    level, message = binder.update(identity, bool(faces), owner, face_width, people)
+
+    # The hand model is the most expensive step in the loop and nothing consumes
+    # it until there is an owner: gestures are read only from a verified person,
+    # and a loose hand only counts as an intruder once we know whose the other
+    # hands are. Skipping it while nobody is identified costs us nothing and
+    # keeps the idle loop fast.
+    hands = hand.detect(image) if owner is not None else ()
+
+    level, message = binder.update(identity, bool(faces), owner, face_width,
+                                   people, hands)
 
     # Gestures are only read once the identity is verified, so an unrecognised
     # person waving their arms cannot trigger anything.
     verified = binder.state == binder.BOUND and owner is not None
-    gesture, fired = watcher.update(owner if verified else None)
+    # Only hands the binder tied to the owner's own arms are read for fingers.
+    gesture, fired = watcher.update(owner if verified else None,
+                                    binder.owned_hands if verified else ())
     if fired:
         granted = rights.allowed(binder.identity, gesture)
         on_gesture(binder.identity, gesture, granted)
@@ -71,6 +84,7 @@ while True:
 
     color = COLORS[level]
     pose.draw(image, people, owner)
+    hand.draw(image, binder.owned_hands)
     if face is not None:
         x1, y1, x2, y2 = face.bbox.astype(int)
         cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
