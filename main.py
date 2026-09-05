@@ -2,6 +2,8 @@ import gpu
 gpu.enable()
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+
 import cv2
 from face_detector import FaceDetector
 from pose_detector import PoseDetector
@@ -26,6 +28,11 @@ watcher = GestureWatcher()
 rights = Permissions()
 video = cv2.VideoCapture(0)
 
+# The hand model runs on the CPU while the face and pose models run on the GPU,
+# so the two can overlap instead of queueing. One worker only: the landmarker
+# keeps internal video state and must not be entered twice at once.
+pool = ThreadPoolExecutor(max_workers=1)
+
 
 def on_gesture(name, gesture, granted):
     # Where the sentry would actually do something. Printing is the placeholder.
@@ -40,6 +47,12 @@ while True:
     ret, image = video.read()
     if not ret:
         break
+
+    # Started before the GPU work so the two run side by side. The gate uses
+    # last frame's state, since this frame's owner is not known yet - one frame
+    # of lag on switching the hand model on is harmless.
+    wanted = binder.state in (binder.AWAITING_HANDS, binder.BOUND, binder.WARN)
+    pending = pool.submit(hand.detect, image) if wanted else None
 
     faces = detector.detect(image)
     people = pose.detect(image)
@@ -59,12 +72,10 @@ while True:
     # stranger is standing there. The binder gets both, separately.
     owner = match_owner(people, face.bbox) if face is not None and identity else None
 
-    # The hand model is the most expensive step in the loop and nothing consumes
-    # it until there is an owner: gestures are read only from a verified person,
-    # and a loose hand only counts as an intruder once we know whose the other
-    # hands are. Skipping it while nobody is identified costs us nothing and
-    # keeps the idle loop fast.
-    hands = hand.detect(image) if owner is not None else ()
+    # Nothing consumes hand data until there is an owner: gestures are read only
+    # from a verified person, and a loose hand only counts as an intruder once we
+    # know whose the other hands are. So the idle loop never pays for it.
+    hands = pending.result() if pending is not None else ()
 
     level, message = binder.update(identity, bool(faces), owner, face_width,
                                    people, hands)
@@ -115,5 +126,6 @@ while True:
     fps = 0.9 * fps + 0.1 * (1.0 / max(now - last, 1e-6))
     last = now
 
+pool.shutdown()
 video.release()
 cv2.destroyAllWindows()
